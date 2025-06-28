@@ -1,0 +1,686 @@
+---
+title: "Term Deposit Subscriptio Prediction"
+output:
+  html_document: default
+  word_document: default
+---
+
+## Background Information
+
+The dataset here under is derived from a telemarketing experience wherein a bank used telephone calls in a bid to convince clients to open a term deposit account. It means investing with the bank a certain amount of money for a certain period of time and the predetermined interest rate is paid at the end of the agreed time. Probably, the bank has a large customer base, thus, to identify potential subscribers through advertising can have a strong positive impact on the results of advertising and the profitability of the campaign.
+
+Another issue is the problem of the effective distribution of marketing resources in the bank. Communicating with every customer is financially expensive and time-consuming, while its effectiveness is often negligible. Furthermore, organizations can result in ineffective targeting also turning customers into dissatisfied customers harming the banks image. That is why the bank should have the ability to define the customers who are willing to take a term deposit.
+
+## Objective
+
+Its main purpose is to create a model for analyzing the data on customers’ characteristics to determine the probability of their term deposit subscription. This model will be used to:
+
+Prioritize customer outreach: Concentrate on communicating directly with that audience that has high likelihood of subscribing, to make the most of the campaign.
+
+Optimize resource allocation: Determine marketing efficiency and improve the targeting of marketing resources by paying attention to the optimal customer niches.
+
+Improve customer experience: Eliminate the possibility of interacting with clients as they aren’t willing to become clients, thus making their banking experience more valuable.
+
+Gain insights into customer behavior: Understand the reasons behind the choice of subscriptions, which will be crucial for the further prediction of customer behavior.
+
+Using the logistic regression model, the bank wants to establish a reliable tool that would contribute to the successful promotion of its term deposits and, consequently, provide increased profit, better satisfaction of the clients, and the efficient utilization of resources.
+
+## Library Loading
+
+```{r}
+# Load libraries
+library(tidyverse) 
+library(caret)  
+library(e1071)    
+library(glmnet)
+library(readxl)
+library(summarytools)
+library(gridExtra)
+library(corrplot)   
+library(car)        
+library(pROC)  
+library(rsample)
+library(randomForest)
+library(xgboost)
+```
+
+## Data Loading
+
+Reading the excel file using the read_xlsx function from realxl package.
+
+```{r}
+data <- read_xlsx(
+  'termsv.xlsx'
+  )
+
+head(data)
+```
+
+## Data Exploration
+
+```{r}
+glimpse(data)
+```
+
+```{r}
+dim(data)
+```
+
+## Summary Statistics
+
+```{r}
+summary(data)
+```
+
+```{r}
+print(dfSummary(data), 
+      method='viewer'
+      )
+```
+
+The descriptive statistics given about the dataset give mean, median, mode, standard deviation and range of the variables in the dataset. In numerical variables like ID and age, descriptive statistics show the total ng values (minimum to maximum), central tend (mean and median and spread (quartiles). For example age variable vary between 17 and 999 while mean age is 40.07 and median is 38 which tells that age distribution is slightly right skewed.
+
+The categorical variables that have been derived include gender, occupation, and marital_status which by their data types are described as character classes meaning that they contain non numeric values. While frequencies in this case are not provided, categorization in form of ‘Length,’ ‘Class,’ and ‘Mode’ shows we have categorical data.
+
+Contact duration as well as the total counts of previous contacts inform numeric variables regarding customer contacts. For instance, the average contact duration is 258.5 sec with a minimal of 0 sec and a maximal of 4918 sec, indicate high variability. Likewise, the summary of previous_contacts shows that most customers had none or little prior contact (median = 0).
+
+The emp_var_rate, cons_price_idx, cons_conf_idx and euribor_3m are indicators of economic trends of the environment. The emp_var_rate (employment variation rate) oscillates within the indicator limit of -3.4 to 1.4, which indicates that during the course of data collection there were both signs of economic contraction and expansion. The euribor_3m variable which is a measure of interest rates varies between 0.634 and 5.045 showingus volatile economy conditions.
+
+Last is subscribed that is categorical dependent variable that may represent whether a customer subscribed to the product or not. Its summary it only confirms they are non-numbers.
+
+```{r}
+# summary of numeric variables
+numeric_summary <- data %>%
+  select(where(is.numeric)) %>%
+  summary()
+
+print(numeric_summary)
+```
+
+```{r}
+data <- data %>% 
+  mutate(across(.cols = everything(),
+                .fns = ~replace(., . == "unknown", NA)))
+
+colSums(is.na(data))
+```
+
+## Data Quality Check and Cleaning
+
+There are multiple anomalies in the data like un-necessary information that can reveal the target variable. Other than this, there are duplicate values in the data. and some anomalies in the gender variable. Removing the null values also make the data ready for the model building.
+
+```{r}
+data <- data %>% 
+  drop_na()
+```
+
+```{r}
+table(data$gender)
+```
+
+```{r}
+# Replace 'm' with 'Male' in the gender column
+data <- data %>%
+  mutate(gender = ifelse(gender == "m", "Male", gender))
+```
+
+```{r}
+table(data$gender)
+```
+
+To pass the categorical variables through the model these variables should be in the factor format.
+
+```{r}
+data <- data %>%
+  mutate(across(c(gender, marital_status, occupation, education_level, contact_method, salary,credit_default,mortgage,personal_loan,car_insurance,life_insurance,savings_account,current_account,month,day_of_week,previous_campaign_outcome, subscribed),
+                as.factor))
+```
+
+## EDA of the data
+
+Relationship of the numerical variables with target variable 'subscribed'.
+
+```{r, fig.height=10, fig.width=12}
+numeric_vars <- data %>% select(where(is.numeric)) %>% names()
+
+numeric_plots <- map(numeric_vars, function(var) {
+  data %>%
+    ggplot(aes(x = subscribed, y = .data[[var]], fill = subscribed)) +
+    geom_boxplot(alpha = 0.7) +
+    labs(title = paste("Distribution of", var, "by Subscribed"),
+         x = "Subscribed",
+         y = var) +
+    theme_minimal()
+})
+numeric_plot_grid <- do.call(grid.arrange, c(numeric_plots, ncol = 2))
+```
+
+**Age:** Percentage distribution by age group was almost comparable for the two groups with slightly a higher percentage of people in the older age group in the subscriber category.
+
+**Contact Duration:** The results also show that subscribers have more extended contact period than non-subscribers.
+
+**Contacts:** Proactively when customers have opted in their contacts listare more than non subscribers list.
+
+**Last Contacted:** The distribution of the last contacted date is equal in both groups.
+
+**Previous Contacts:** In Table II, it is as shown, subscribers had more contact in the past than subscribers in the same table.
+
+**Employment Variation Rate:** The employment variation rate is 4.7 and 4.5 respectively for the first and second group; hence, the distribution is similar between the two groups.
+
+**Consumer Price Index:** The frequency distribution of the consumer price index is also almost equal between the two groups.
+
+**Consumer Confidence Index:** As to the distribution of the consumer confidence index, no significant differences between the two groups of respondents were revealed.
+
+**Euribor 3-month Rate:** Daily Euribor 3-month rate is also fairly stable for both groups with the distribution diagrams looking almost identical.
+
+**Number of Employees:** The distribution of the number of employees of both groups is comparable.
+
+## Dealing with Outliers
+
+Outlier removal using the cap method.
+
+```{r}
+cap_outliers <- function(x) {
+  qnt <- quantile(x, probs = c(0.25, 0.75), na.rm = TRUE)
+  caps <- quantile(x, probs = c(0.01, 0.99), na.rm = TRUE)
+  H <- 1.5 * IQR(x, na.rm = TRUE)
+  x[x < (qnt[1] - H)] <- caps[1]
+  x[x > (qnt[2] + H)] <- caps[2]
+  return(x)
+}
+```
+
+```{r}
+data$age <- cap_outliers(data$age)
+data$previous_contacts <- cap_outliers(data$previous_contacts)
+data$contact_duration <- cap_outliers(data$contact_duration)
+data$contacts <- cap_outliers(data$contacts)
+data$last_contacted <- cap_outliers(data$last_contacted)
+```
+
+```{r, fig.height=10, fig.width=12}
+numeric_vars <- data %>% select(where(is.numeric)) %>% names()
+
+numeric_plots <- map(numeric_vars, function(var) {
+  data %>%
+    ggplot(aes(x = subscribed, y = .data[[var]], fill = subscribed)) +
+    geom_boxplot(alpha = 0.7) +
+    labs(title = paste("Distribution of", var, "by Subscribed after outlier removal"),
+         x = "Subscribed",
+         y = var) +
+    theme_minimal()
+})
+numeric_plot_grid <- do.call(grid.arrange, c(numeric_plots, ncol = 2))
+
+```
+
+Relationship of the categorical variables with target variables subscribed
+
+```{r}
+categorical_vars <- data %>% select(where(is.factor)) %>% names()
+
+categorical_plots <- map(categorical_vars, function(var) {
+  data %>%
+    count(.data[[var]], subscribed) %>%
+    ggplot(aes(x = .data[[var]], y = n, fill = subscribed)) +
+    geom_bar(stat = "identity", position = "dodge", alpha = 0.8) +
+    labs(title = paste("Distribution of", var, "by Subscribed"),
+         x = var,
+         y = "Count") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+})
+```
+
+```{r, fig.height=15, fig.width=20}
+categorical_plot_grid <- do.call(grid.arrange, c(categorical_plots, ncol = 2))
+```
+
+**Gender:** There isn’t much difference in gender distribution between viewers who subscribed to Outflex and viewers who do not.
+
+**Occupation:** One can see great differences within occupation patterns. A number of occupations seem to feature more on the list of subscribers than others.
+
+**Salary:** There also appears to be a difference in the proportion between contents of each salary group among the two groups. Subscribers may be located within specific ranges of salary.
+
+**Marital Status:** Marital status distribution also indicates some differences between subscribers and non-subscribers.
+
+**Education Level:** Within the education level group there is variation observed between the two groups. It is possible to identify some education levels as the subscribers’ priorities.
+
+**Credit Default:** From the above, one has a feeling that credit default status is distributed differently between subscribers and non-subscribers.
+
+**Mortgage:** This study also finds that subscription status seems to be related to the existence of a mortgage.
+
+**Personal Loan:** As with mortgage, the status of personal loans appears to be related to subscription status.
+
+**Car Insurance:** Car insurance which is compulsory in some countries might be split by subscription status.
+
+**Life Insurance:** The analysis reveals some differences in the results concerning life insurance status between subscribers and non-subscribers.
+
+**Savings Account:** There is an indication that the coming of a savings account can determine the subscription status.
+
+**Current Account**: Now subscription might be related to the current account status.
+
+**Contact Method:** However, it appears that the contact method of choice varies between those subscribers and non-subscribers.
+
+**Month:** The contact months in both the groups are not exactly similar with little variation present.
+
+**Day of Week:** As shown in figure 2, the contact days of the week are not so distinctive between the two groups of students.
+
+**Previous Campaign Outcome:** Evaluation of the previous campaigns indicates that, subscription status appears be a factor of the campaigns.
+
+Replacing the unknown categories with NA value and then removing these values.
+
+## Correlation Matrix
+
+```{r}
+numeric_vars <- data %>% select_if(is.numeric)
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+corrplot(cor_matrix, method = "circle", type = "lower", tl.col = "black", tl.srt = 45)
+
+```
+
+```{r}
+head(cor_matrix)
+```
+
+```{r}
+data <- data %>% 
+  mutate(across(.cols = everything(),
+                .fns = ~replace(., . == "unknown", NA)))
+
+colSums(is.na(data))
+```
+
+Removing the features that has strong correlation with target variable and also those that are ir-relevant to the target variable.
+
+## Again checking data quality after outlier removal
+
+```{r}
+data <- data %>% 
+  select(-c(contacts,ID, previous_campaign_outcome, day_of_week,contact_duration, month)) %>% 
+  drop_na()
+```
+
+The data contain 135 duplicates and removal is necessary to produce the model with the best performace.
+
+```{r}
+sum(duplicated(data))
+```
+
+```{r}
+data <- data[!duplicated(data), ]
+```
+
+We will also verify whether there are any features which come close to being constant. They should be stripped off since they don’t help with content and are unnecessary during model construction. This is the last data after applying the cleaning process.
+
+```{r}
+data <- data[, -nearZeroVar(data)]
+data
+```
+
+**Checking the class imbalance**
+
+Benefits of having a class imbalance lies on the aspect that privides more focused attention on the minority class when constructing the model, it is highly relevant in the real application of the model as such classes are rare. This paper showed that imbalanced data can be fixed in such a way that both classes can be modeled to be predicted accurately thus enhancing fairness. One way learning from downsampling is that by bringing down the number of samples in major class, the model can be able to pay much attention on the minor class due to the existence of imbalanced classes. This technique can enhance the performance and accuracy of the model as it shall avoid cases whereby the model is dominated to mainly predict samples from the dominant class, in this case, Enhance performance and accuracy of the model by avoiding the model to be kept on predicting samples from the largest class.
+
+```{r}
+prop.table(table(data$subscribed))
+```
+
+```{r}
+table(data$subscribed)
+```
+
+```{r}
+# Separate the majority and minority classes
+majority <- data %>% filter(subscribed == "no")
+minority <- data %>% filter(subscribed == "yes")
+
+# Downsample the majority class to match the minority class size
+set.seed(123)
+majority_downsampled <- majority %>% sample_n(nrow(minority))
+
+# Combine the downsampled majority class with the minority class
+balanced_data <- bind_rows(majority_downsampled, minority)
+
+# Shuffle the data
+balanced_data <- balanced_data %>% sample_frac(1)
+
+# Verify the class distribution
+table(balanced_data$subscribed)
+```
+
+## Logistic Regression Model with whole data
+
+```{r}
+
+# Convert the target variable to a binary 
+balanced_data$subscribed <- ifelse(balanced_data$subscribed == "yes", 1, 0)
+```
+
+```{r}
+# Split data into training and test sets
+set.seed(123)
+split <- sample(1:nrow(balanced_data), size = 0.8 * nrow(balanced_data))
+train_data <- balanced_data[split, ]
+test_data <- balanced_data[-split, ]
+
+```
+
+```{r}
+# Fit Logistic Regression Model
+logit_model <- glm(subscribed ~ ., data = train_data, family = "binomial")
+
+# Summary of the model
+summary(logit_model)
+```
+
+Based on customer and economic characteristics, the model of logistic regression was applied to determine the probability of a customer using a term deposit. It also emerged that several predictors were statistically significant, which brought out the nature of the relationship between the variables and the target variable.
+
+In the case of notable coefficients, the coefficient for gender (male) had a positive relationship with subscription highlighting the fact that customers of this gender are more likely to be in a term deposit agreement as 0.3877. Occupation also contributed to the equation, where customers who are retired have a probability of 0.5717 while students were 0.7161, other occupations available such as blue collar, domestic etc were insignificant.
+
+Possible consequences of starting salary levels were found to have a negative influence: substantiating the hypothesis that subjects with low and moderate starting salaries are unfavorable for subscription. With regards to education, telecommunications customers with a higher education, including university or high school education were more likely to subscrib.
+
+Banking and other related financial products such as car insurance, life insurance, savings and current account as well as credit cards appeared to have positive correlation coefficients to subscription thus indicating that those with higher number of bank products are most probable to subscribe.
+
+The way of contact was also important; customers reached through the phone have a lower chance of taking up a term deposit. Finally, employment variation rate and consumer price index were found to be significant; negative relationship between employment variation rate and subscription and positive relationship between consumer price index and subscription.
+
+## Model Evaluation
+
+```{r}
+# Predict probabilities on test set
+test_pred_prob <- predict(logit_model, newdata = test_data, type = "response")
+
+# Convert probabilities to binary predictions
+threshold <- 0.5
+test_pred_class <- ifelse(test_pred_prob >= threshold, 1, 0)
+
+```
+
+## RMSE
+
+```{r}
+preds <- predict(logit_model, test_data)
+RMSE(preds, test_data$subscribed)
+```
+
+## Confusion matrix
+
+```{r}
+conf_matrix <- confusionMatrix(
+  factor(test_pred_class, levels = c(0, 1)),
+  factor(test_data$subscribed, levels = c(0, 1))
+)
+
+# Print Confusion Matrix and Accuracy
+cat("Confusion Matrix:\n")
+print(conf_matrix$table)
+```
+
+```{r}
+# Plot Confusion Matrix
+fourfoldplot(conf_matrix$table, 
+             color = c("#E41A1C", "#377EB8"),
+             conf.level = 0, 
+             main = "Confusion Matrix")
+```
+
+Overall, the model appears to be performing well with a good balance of true positives and true negatives. The number of false positives and false negatives is relatively low, indicating that the model is making accurate predictions most of the time. 599 instances were correctly predicted as belonging to class 1. 570 instances were correctly predicted as belonging to class 0. 188 instances were incorrectly predicted as belonging to class 1 when they actually belonged to class 0. 183 instances were incorrectly predicted as belonging to class 0 when they actually belonged to class 1.
+
+## Accuracy
+
+```{r}
+accuracy <- sum(
+  diag(conf_matrix$table)) / sum(conf_matrix$table)
+cat("\nAccuracy:", round(accuracy * 100, 2), "%\n")
+```
+
+## ROC Analysis
+
+```{r}
+roc_curve <- roc(test_data$subscribed, test_pred_prob)
+auc_value <- auc(roc_curve)
+
+# Plot ROC Curve
+plot(roc_curve, main = paste("ROC Curve (AUC =", round(auc_value, 3), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+```
+
+The AUC value of 0.846 indicates that the model has good discriminatory power. An AUC of 1.0 would represent a perfect classifier, while an AUC of 0.5 indicates random performance The curve is convex, indicating that the model is generally able to distinguish between the two classes. The steeper the curve, the better the model's ability to separate the classes.
+
+The ROC curve suggests that the model has reasonable performance in distinguishing between the two classes. The AUC value indicates good discrimination ability, and the shape of the curve suggests that the model is generally able to separate the classes effectively.
+
+## Hypothesis setting based on correlation
+
+Excludig the id column as it is unnecessary information. Now extracting the numerical variables based on the correlation and p value of categorical variables.
+
+```{r}
+data$subscribed <- ifelse(data$subscribed == "yes", 1, 0)
+
+# Separate numerical and categorical variables
+numerical_vars <- data %>% select_if(is.numeric)
+categorical_vars <- data %>% select_if(is.factor)
+```
+
+```{r}
+numerical_correlations <- cor(numerical_vars, use = "complete.obs", method = "pearson")
+```
+
+```{r}
+chi_sq_results <- sapply(categorical_vars, function(x) {
+  if (n_distinct(x) > 1) {
+    chisq.test(table(x, data$subscribed))$p.value
+  } else {
+    NA
+  }
+})
+chi_sq_results
+```
+
+```{r}
+chi_sq_results_df <- data.frame(
+  Variable = names(chi_sq_results),
+  Chi_Square_P_Value = chi_sq_results
+) %>% drop_na()
+
+chi_sq_results_df
+
+# Set thresholds for high correlation and significant Chi-Square association
+cor_threshold <- 0.5
+p_value_threshold <- 0.05
+
+# Select highly correlated numerical variables
+high_corr_numerical_vars <- colnames(numerical_vars)[
+  apply(numerical_correlations, 2, function(x) any(abs(x) > cor_threshold))
+]
+```
+
+```{r}
+significant_categorical_vars <- chi_sq_results_df %>%
+  filter(Chi_Square_P_Value < p_value_threshold) %>%
+  pull(Variable)
+
+# Combine selected variables
+selected_variables <- c(high_corr_numerical_vars, significant_categorical_vars)
+```
+
+```{r}
+Hypothesis_2 <- data %>% select(all_of(selected_variables))
+```
+
+```{r}
+print("Selected Numerical Variables:")
+print(high_corr_numerical_vars)
+
+print("Selected Categorical Variables:")
+print(significant_categorical_vars)
+
+print("Subset Dataset for Hypothesis Testing:")
+head(Hypothesis_2)
+```
+
+using this hypothesis to build the regression models.
+
+```{r}
+selected_data <- data %>% 
+  select(all_of(selected_variables), subscribed)
+```
+
+### Splitting data
+
+```{r}
+set.seed(123)
+train_index <- createDataPartition(selected_data$subscribed, p = 0.8, list = FALSE)
+train_data <- selected_data[train_index, ]
+test_data <- selected_data[-train_index, ]
+```
+
+```{r}
+# Separate predictors and target
+x_train <- train_data %>% select(-subscribed)
+y_train <- train_data$subscribed
+x_test <- test_data %>% select(-subscribed)
+y_test <- test_data$subscribed
+```
+
+## Linear Regression Model
+
+```{r}
+linear_model <- lm(subscribed ~ ., data = train_data)
+linear_model
+
+```
+
+The use of regression model gives an understanding on factors likely to affect subscription. Some of these are previous contacts, cons_price_idx and euribor_3m which have values that increase the probability of subscription when higher. Notably, gender (Male) and the current account or car insurance holders are more inclined to subscribe. On the other hand, negative relation with emp_var_rate and salary (low or medium categories) mean these factors reduce subscription probability. As for categorical coefficients, employment status with those who have never worked, students, and retired individuals have a higher probability of subscription, although blue-collar workers and entrepreneurs have a lower probability of subscription. Further, university education and life insurance subscription are also positively related with subscriptions. In sum, this model sheds light on how demographic, financial and behavioiral factors interact in regard to the output.
+
+```{r}
+linear_preds <- predict(linear_model, newdata = test_data)
+rmse_linear <- RMSE(linear_preds, y_test)
+```
+
+## Ridge Regression Model
+
+```{r}
+ridge_model <- cv.glmnet(as.matrix(x_train), y_train, alpha = 0)
+ridge_model
+```
+
+The cross-validation results for the Ridge Regression modelómzcvxRLFext: 𝛼 = 0 Up and down triangles refer to the values of the regularization parameter (α=0) indicate the performance of the model. 𝜆 λ). Two key points are highlighted:
+
+Minimum MSE ( 𝜆 min ​ ): At 𝜆 = 0.0122 (index 100) MSE =0.09721, SE = 0.001105 Such a value indicates that this value of 𝜆 λ is considered as optimization in terms of both complexity of models under consideration as well as prediction potential on the given dataset. The model has 7 coefficients that equal to 0, which means that 7 predictors are important for the prediction.
+
+1-SE Rule ( 𝜆 1se ): At 𝜆 = 0.13729 (index 74), the MSE =0.09820 and the SE =0.001045. This value of 𝜆 λ is chosen based on the 1-SE rule which works better than cross-validation by providing a simpler model which generalizes better but has slightly higher error. Like the 𝜆 min λ min ​ According to the configuration of predetermined parameters within this model, this configuration also holds 7 non-zero coefficients.
+
+```{r}
+ridge_preds <- predict(ridge_model, as.matrix(x_test), s = "lambda.min")
+rmse_ridge <- RMSE(ridge_preds, y_test)
+```
+
+## Lasso Regression Model
+
+```{r}
+lasso_model <- cv.glmnet(as.matrix(x_train), y_train, alpha = 1)
+```
+
+```{r}
+lasso_model
+```
+
+Cross validation results of Lasso Regression Model reveals here: 𝛼 = 1) in order to demonstrate the performance of the model. λ):
+
+Minimum MSE ( 𝜆 min ​ ): At 𝜆 = 0.000045 or index 86), then the MSE reduced to 0.09712 + SE of 0.001740. At this stage the model keeps 7 non zero coefficients imply that 7 of the predictor random variables influence the prediction.
+
+1-SE Rule ( 𝜆 1se ​ ): At 𝜆 = 0.022901 When λ = 0.022901 which corresponds to an index 19, the MSE has a slight rise and reaches 0.09879 with the SE of 0.001874. Under this configuration, the flow of funds model is simplified to keep only 2 non-zero coefficients. This is in concordance with the 1-SE rule, because the objective here is to choose a model with a fewer number of predictors but makes a little more error which is better for purposes of giving a general estimate.
+
+```{r}
+lasso_preds <- predict(lasso_model, as.matrix(x_test), s = "lambda.min")
+rmse_lasso <- RMSE(lasso_preds, y_test)
+```
+
+```{r}
+rmse_results <- data.frame(
+  Model = c("Linear Regression", "Ridge Regression", "Lasso Regression"),
+  RMSE = c(rmse_linear, rmse_ridge, rmse_lasso )
+)
+print(rmse_results)
+```
+
+```{r}
+ggplot(rmse_results, aes(x = Model, y = RMSE, fill = Model)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  theme_minimal() +
+  labs(title = "Comparison of RMSE for Regression Models", y = "RMSE", x = "Model") +
+  scale_fill_brewer(palette = "Set3")
+```
+
+**Linear Regression (RMSE = 0.2791)**: This model achieves the lowest RMSE, indicating that it has the highest prediction accuracy among the three. However, it does not account for potential multicollinearity or overfitting, as no regularization is applied.
+
+**Ridge Regression (RMSE = 0.2953)**: The slightly higher RMSE reflects a trade-off between prediction accuracy and the benefits of regularization. Ridge Regression shrinks the coefficients to reduce the impact of multicollinearity and overfitting, which can improve model robustness on unseen data.
+
+**Lasso Regression (RMSE = 0.2952)**: Lasso achieves an RMSE very close to Ridge Regression. In addition to regularization, Lasso performs feature selection by setting some coefficients to zero. This can result in a simpler and more interpretable model, especially useful when some predictors are less significant.
+
+## MultiColinearity check
+
+```{r}
+vif_results <- vif(linear_model)
+print("Multi-Colinearity by Variance Inflation Factor (VIF) for Linear Regression:")
+print(vif_results)
+```
+
+The Variance Inflation Factor (VIF) analysis reveals varying levels of multicollinearity among the predictors in the linear regression model. Most variables, including *age*, *previous_contacts*, *gender*, *salary*, *education_level*, and *contact_method*, show VIF values well below 5, indicating low multicollinearity and suggesting these variables are independently contributing to the model. However, variables such as *cons_price_idx* (3.075) and *cons_conf_idx* (1.662) exhibit moderate multicollinearity, meaning they have slight correlations with other predictors but are still useful in the model. On the other hand, *emp_var_rate* (36.939), *euribor_3m* (63.028), and *n_employed* (33.849) have alarmingly high VIF values, signaling severe multicollinearity. This high degree of correlation among these variables can destabilize the regression coefficients and affect the model's performance.
+
+## Five Linear Models
+
+Linear Regression provides the most accurate predictions on the training data, but Ridge and Lasso Regression improve robustness and interpretability. Lasso is particularly valuable if feature selection is a priority, as it simplifies the model without significantly compromising prediction accuracy.
+
+```{r}
+
+models <- list(
+  lm_1 = lm(subscribed ~ age + emp_var_rate + euribor_3m, data = train_data),
+  lm_2 = lm(subscribed ~ previous_contacts + cons_price_idx + n_employed, data = train_data),
+  lm_3 = lm(subscribed ~ gender + marital_status + education_level, data = train_data),
+  lm_4 = lm(subscribed ~ salary + car_insurance + life_insurance, data = train_data),
+  lm_5 = lm(subscribed ~ savings_account + current_account + contact_method, data = train_data)
+)
+```
+
+```{r}
+# Fit and summarize each model
+model_summaries <- lapply(models, summary)
+
+# Print summaries for all models
+for (i in seq_along(models)) {
+  cat("\nModel", i, "Summary:\n")
+  print(model_summaries[[i]])
+}
+```
+
+```{r}
+calculate_rmse <- function(model, data) {
+  predictions <- predict(model, newdata = data)
+  actuals <- data$subscribed
+  sqrt(mean((predictions - actuals)^2))
+}
+```
+
+```{r}
+rmse_values <- sapply(models, calculate_rmse, data = test_data)
+
+
+rmse_df <- data.frame(
+  Model = paste0("Model_", seq_along(rmse_values)),
+  RMSE = rmse_values
+)
+
+# Print RMSE values
+print(rmse_df)
+
+```
+
+```{r}
+ggplot(rmse_df, aes(x = Model, y = RMSE, fill = Model)) +
+  geom_bar(stat = "identity", color = "black") +
+  labs(title = "RMSE of Linear Regression Models", x = "Model", y = "RMSE") +
+  theme_minimal()
+```
+
+Linear Regression delivers the most accurate predictions on the training data, but it may suffer from overfitting when faced with multicollinearity or irrelevant features. In contrast, Ridge and Lasso Regression enhance the model’s robustness by applying regularization, which helps prevent overfitting and improve generalization. Lasso Regression, in particular, is beneficial when feature selection is a priority, as it forces some coefficients to zero, effectively simplifying the model while maintaining prediction accuracy. This makes Lasso ideal for situations where interpretability and model simplicity are important, without significantly sacrificing the quality of the predictions.
